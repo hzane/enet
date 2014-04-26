@@ -6,6 +6,7 @@ var (
 	enet_err_unsupported_flags = enet_error("enet unsupport flag")
 	enet_err_not_implemented   = enet_error("enet not implemented")
 	enet_err_assert            = enet_error("assert false")
+	enet_err_invalid_status    = enet_error("host invalid status")
 )
 
 func assert(v bool, format string, a ...interface{}) {
@@ -13,7 +14,11 @@ func assert(v bool, format string, a ...interface{}) {
 		panic(enet_error(format, a))
 	}
 }
-
+func assure(v bool, format string, a ...interface{}) {
+	if !v {
+		fmt.Printf(format, a)
+	}
+}
 func enet_panic_error(format string, a ...interface{}) {
 	panic(fmt.Errorf(format, a))
 }

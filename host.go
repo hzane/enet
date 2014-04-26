@@ -9,76 +9,86 @@ import (
 
 type enet_host struct {
 	total_rcvd_bytes int
-	rcvd_bytes       int
 	socket           *net.UDPConn
 	laddr            *net.UDPAddr
 	handlers         Handlers
-	incoming         chan enet_packet
-	outgoing         chan enet_packet
+	incoming         chan enet_command
+	outgoing         chan enet_command
 	tick             chan time.Time
 	peers            map[string]*enet_peer
 	timers           *timers
+	wnd_size         uint32
+	rcv_bandwidth    uint32
+	snd_bandwidth    uint32
+	throttle_i       uint32
+	throttle_acce    uint32
+	throttle_dece    uint32
+	rcvd_bytes       int
+	sent_bytes       int
+	recv_bps         int
+	send_bps         int
+	bps_epoc         int64
+	now              int64
 }
 
 func enet_host_new() *enet_host {
-	return &enet_host{}
+	return &enet_host{
+		wnd_size:      enet_wnd_size_default,
+		throttle_i:    enet_throttle_default,
+		throttle_acce: enet_throttle_acce_default,
+		throttle_dece: enet_throttle_dece_default,
+	}
 }
 
-func (self *enet_host) peer(addr *net.UDPAddr) Peer {
-	peer, ok := self.peers[addr.String()]
+func host_peer_get(host *enet_host, addr net.Addr) Peer {
+	id := addr.String()
+	peer, ok := host.peers[id]
 	if !ok {
-		peer = enet_peer_new()
+		peer = enet_peer_new(addr)
+		host.peers[id] = peer
 	}
 	return peer
 }
-func (host *enet_host) handle_send(packet enet_packet) bool {
-	_, err := host.socket.WriteToUDP(packet.data, packet.addr)
-	return err == nil
-}
-func (host *enet_host) handle_recv(packet enet_packet) bool {
-	peer := host.peer(packet.addr).(*enet_peer)
-	reader := enet_reader_new(packet.data)
-	//hdraw, err :=enet_packet_header_raw_decode(reader)
-	hdr, err := enet_packet_header_decode(reader)
-	if err == nil || hdr.pid == peer.id {
-		peer.handle_recv(host, hdr, reader)
-	}
-	host.rcvd_bytes += len(packet.data)
-	return true
-}
-
-func (host *enet_host) send_to(data []byte, addr *net.UDPAddr) error {
-	packet := enet_packet{addr, data}
-	host.outgoing <- packet
-	return nil
-	//	_, err := host.socket.WriteToUDP(data, addr)
+func host_socket_send(host *enet_host, data []byte, addr *net.UDPAddr) error {
+	_, err := host.socket.WriteToUDP(data, addr)
+	return err
 }
 
 // false: break service
 // use this function to do some cleanup
-func (host *enet_host) handle_break(os.Signal) bool {
+func host_handle_break(host *enet_host, sig os.Signal) bool {
 	print("host cleanup...here")
 	return false
 }
 
-func (host *enet_host) handle_tick(time.Time) bool {
-	for timer := host.timeout(); timer != nil; {
-		timer.run(host)
-		timer = host.timeout()
+func host_handle_tick(host *enet_host, now time.Time) bool {
+	host.now = unixtime_now()
+	for timer := host_first_timeo(host); timer != nil; {
+		command_timeo_run(host, timer)
+		timer = host_first_timeo(host)
 	}
 	return true
 }
 
-func (host *enet_host) timeout() (t timer) {
+func host_first_timeo(host *enet_host) (t *enet_command) {
 	if host.timers.Len() == 0 {
 		return
 	}
-	now := time.Now().UnixNano()
+
 	top := (*host.timers)[0]
-	if top.weight < now {
-		t = heap.Pop(host.timers).(timer)
+	if top.timeo < host.now {
+		t = heap.Pop(host.timers).(*enet_command)
 	}
 	return
+}
+func host_timeo_remove(host *enet_host, idx int) {
+	if idx >= host.timers.Len() {
+		return
+	}
+	heap.Remove(host.timers, idx)
+}
+func host_timeo_push(host *enet_host, cmd *enet_command) {
+	heap.Push(host.timers, cmd)
 }
 func enet_host_connect() (peer *enet_peer, err error) {
 	return nil, enet_err_not_implemented
@@ -131,4 +141,8 @@ func enet_host_peer_via_address(host *enet_host, addr enet_address) (peer *enet_
 
 func enet_reader_create(data []uint8) enet_reader {
 	return nil
+}
+
+func command_timeo_run(host *enet_host, cmd *enet_command) {
+
 }
