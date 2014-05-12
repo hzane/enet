@@ -43,7 +43,7 @@ func (self *priority_queue) Pop() interface{} {
 func new_enet_timer_queue() enet_timer_queue {
 	timers := make(priority_queue, 0)
 	heap.Init(&timers)
-	return enet_timer{&timers}
+	return enet_timer_queue{&timers}
 }
 func (timers enet_timer_queue) push(deadline int64, cb enet_timer_callback) *enet_timer_item {
 	v := &enet_timer_item{deadline, cb, -1}

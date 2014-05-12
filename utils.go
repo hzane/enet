@@ -11,7 +11,7 @@ func time2i64(t time.Time) int64 {
 	return n / int64(time.Millisecond)
 }
 func time2ui32(t time.Time) uint32 {
-	return uint32(unixtimei64(t))
+	return uint32(time2i64(t))
 }
 
 func betweenui32(a, r, l uint32) uint32 {

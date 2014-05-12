@@ -136,7 +136,7 @@ func (host *enet_host) do_socket_receive() {
 			err = binary.Read(reader, binary.BigEndian, &pkhdr)
 			pkhdr.size -= uint32(binary.Size(pkhdr))
 			payload := make([]byte, pkhdr.size)
-			n, err := reader.Read(payload)
+			_, err := reader.Read(payload)
 
 			if err == nil {
 				host.when_incoming_packet(phdr, pkhdr, payload, addr)

@@ -136,6 +136,9 @@ func (peer *enet_peer) when_enet_incoming_ack(header enet_packet_header, payload
 		}
 	}
 }
+func notify_data(peer *enet_peer, dat []byte) {
+
+}
 func notify_peer_connected(peer *enet_peer) {
 
 }
@@ -170,12 +173,15 @@ func (peer *enet_peer) when_enet_incoming_syn(header enet_packet_header, payload
 	writer := bytes.NewBuffer(nil)
 	binary.Write(writer, binary.BigEndian, synack)
 
-	ch.outgoing_trans(&enet_channel_item{phdr, enet_packet_fragment{}, writer.Bytes(), 0, 0, func() {}})
-	peer.push_outgoing_window(synack, enet_channel_none)
+	// todo add retrans timer
+	ch.outgoing_trans(&enet_channel_item{phdr, enet_packet_fragment{}, writer.Bytes(), 0, 0, nil})
 }
 
 func (peer *enet_peer) when_enet_incoming_synack(header enet_packet_header, payload []byte) {
-	syn, err := enet_packet_syn_decode(payload)
+	reader := bytes.NewReader(payload)
+	var syn enet_packet_syn
+	err := binary.Read(reader, binary.BigEndian, &syn)
+
 	if err != nil || peer.flags&enet_peer_flags_syn_sending == 0 {
 		peer.reset()
 		return
@@ -193,10 +199,10 @@ func (peer *enet_peer) when_enet_incoming_fin(header enet_packet_header, payload
 		// needn't do anything, just wait for self fin's ack
 		return
 	}
-	peer.flags |= enet_peer_flags_fin_rcvd | enet_peer_flags_last_acking // enter time-wait state
+	peer.flags |= enet_peer_flags_fin_rcvd | enet_peer_flags_lastack // enter time-wait state
 	notify_peer_disconnected(peer)
-	to := new_last_ack_timer(peer.rtt_timeout*3, func() { host.destroy_peer(peer) })
-	peer.host.push_timer(to)
+
+	peer.host.timers.push(peer.host.now+peer.rtt_timeo*2, func() { peer.host.destroy_peer(peer) })
 }
 
 func (peer *enet_peer) when_enet_incoming_ping(header enet_packet_header, payload []byte) {
@@ -211,43 +217,42 @@ func (peer *enet_peer) when_enet_incoming_reliable(header enet_packet_header, pa
 	if ch == nil {
 		return
 	}
-	ch.incoming_trans(&enet_wnd_item{header, enet_packet_fragment{}, payload})
+	ch.incoming_trans(&enet_channel_item{header, enet_packet_fragment{}, payload, 0, 0, nil})
 	ch.incoming_ack(header.sn)
 	for i := ch.incoming_slide(); i != nil; i = ch.incoming_slide() {
-		notify_reliable(peer, i)
+		notify_data(peer, i.payload)
 	}
-	//notify_reliable(peer, payload)
 }
 
 func (peer *enet_peer) when_enet_incoming_fragment(header enet_packet_header, payload []byte) {
 	reader := bytes.NewReader(payload)
-	frag := enet_packet_fragment_decode(reader)
-	dat := make([]byte, header.size-binary.Size(frag))
+	var frag enet_packet_fragment
+	binary.Read(reader, binary.BigEndian, &frag)
+	header.size -= uint32(binary.Size(frag))
+	dat := make([]byte, header.size)
 	reader.Read(dat)
 	ch := peer.channel_from_id(header.chanid)
 	if ch == nil {
 		return
 	}
-	ch.incoming_trans(&enet_wnd_item{header, frag, dat})
+	ch.incoming_trans(&enet_channel_item{header, frag, dat, 0, 0, nil})
 	ch.incoming_ack(header.sn)
 	for i := ch.incoming_slide(); i != nil; i = ch.incoming_slide() {
-		notify_reliable(peer, i)
+		notify_data(peer, i.payload)
 	}
 }
 
 func (peer *enet_peer) when_enet_incoming_unrelialbe(header enet_packet_header, payload []byte) {
 	reader := bytes.NewReader(payload)
-	ur := enet_packet_unreliable_decode(reader)
-	dat := make([]byte, header.size-binary.Size(ur))
+	var ur enet_packet_unreliable
+	binary.Read(reader, binary.BigEndian, &ur)
+	header.size -= uint32(binary.Size(ur))
+	dat := make([]byte, header.size)
 	reader.Read(dat)
-	notify_unreliable(peer, ur.usn, dat)
+	notify_data(peer, dat)
 }
 func (peer *enet_peer) when_unknown(header enet_packet_header, payload []byte) {
-	reader := bytes.NewReader(payload)
-	ur := enet_packet_unreliable_decode(reader)
-	dat := make([]byte, header.size-binary.Size(ur))
-	reader.Read(dat)
-	notify_unreliable(peer, ur.usn, dat)
+
 }
 func (peer *enet_peer) when_enet_incoming_eg(header enet_packet_header, payload []byte) {
 
@@ -267,8 +272,8 @@ const (
 	enet_peer_flags_fin_sent    // rcvd fin's ack
 	enet_peer_flags_fin_rcvd    //
 	enet_peer_flags_nothing
-	enet_peer_flags_synack_rcvd
 	enet_peer_flags_synack_sending
+	enet_peer_flags_synack_rcvd
 	enet_peer_flags_synack_sent
 )
 
@@ -280,8 +285,8 @@ func (peer *enet_peer) update_rtt(rtt int64) {
 	peer.lowest_rtt = mini64(peer.lowest_rtt, peer.rtt)
 	peer.highest_rttv = maxi64(peer.highest_rttv, peer.rttv)
 
-	if host.now > peer.throttle_interval+peer.throttle_epoc {
-		peer.throttle_epoc = host.now
+	if peer.host.now > peer.throttle_interval+peer.throttle_epoc {
+		peer.throttle_epoc = peer.host.now
 		peer.last_rtt = peer.lowest_rtt
 		peer.last_rttv = peer.highest_rttv
 		peer.lowest_rtt = peer.rtt
