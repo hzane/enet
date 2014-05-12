@@ -1,118 +1,309 @@
 package enet
 
 import (
+	"bytes"
+	"encoding/binary"
 	"net"
 )
 
-const enet_channel_count = 16
-
 type enet_peer struct {
-	lid             uint16 // local peer id
-	rid             uint16 // remote peer id
-	conn_id         uint32 // connection id
-	incoming_sessid uint16 // must be 0
-	outgoing_sessid uint16 // outgoing session id, must be 0
-	mtu             uint32 // remote mtu
-	snd_bandwidth   uint32
-	rcv_bandwidth   uint32
-	wnd_size        uint32 // bytes
-	chan_count      uint32
-	throttle        uint32
-	throttle_i      int64
-	throttle_acce   uint32
-	throttle_dece   uint32
-	rdata           uint
-	ldata           uint // should use uint
-	state           int
-	wnd_used        int
-	ack_used        int
-	channel         [enet_channel_count]enet_channel
-	wnd             [enet_wnd_count]*enet_command
-	acks            [enet_wnd_count]*enet_command
-	last_intrans    uint16 // last packet id sent but not acked
-	first_ack       uint16 // first ack should be sent in acks
-	raddr           *net.UDPAddr
-	intrans_bytes   int
-	rcvd_bytes      int
-	sent_bytes      int
-	recv_bps        int
-	sent_bps        int
-	bps_epoc        int64
-	rtt             int64
-	rttv            int64
-	last_rtt        int64
-	last_rttv       int64
-	lowest_rtt      int64
-	highest_rttv    int64
-	rtt_epoc        int64
-	throttle_epoc   int64
-	timeout_limit   int64
-	timeout_min     int64
-	timeout_max     int64
+	clientid          uint32 // local peer id
+	mtu               uint32 // remote mtu
+	snd_bandwidth     uint32
+	rcv_bandwidth     uint32
+	wnd_size          uint32 // bytes
+	wnd_bytes         uint32
+	chan_count        uint8
+	throttle          uint32
+	throttle_interval int64
+	throttle_acce     uint32
+	throttle_dece     uint32
+	rdata             uint
+	ldata             uint // should use uint
+	flags             int
+	intrans_bytes     int
+	channel           [enet_default_channel_count + 1]enet_channel
+	remote_addr       *net.UDPAddr
+	rcvd_bytes        int
+	sent_bytes        int
+	recv_bps          int
+	sent_bps          int
+	bps_epoc          int64
+	rtt_timeo         int64
+	rtt               int64 // ms
+	rttv              int64
+	last_rtt          int64
+	last_rttv         int64
+	lowest_rtt        int64
+	highest_rttv      int64
+	rtt_epoc          int64
+	throttle_epoc     int64
+	timeout_limit     int64
+	timeout_min       int64
+	timeout_max       int64
+	host              *enet_host
 }
 
-var (
-	enet_peer_id_seed      uint16 = 0
-	enet_peer_conn_id_seed uint32 = 0
-)
-
-func enet_peer_new(addr net.Addr) *enet_peer {
-	enet_peer_id_seed++
-	enet_peer_conn_id_seed++
+func new_enet_peer(addr *net.UDPAddr, host *enet_host) *enet_peer {
+	cid := host.next_clientid
+	host.next_clientid++
 	return &enet_peer{
-		lid:           enet_peer_id_seed,
-		conn_id:       enet_peer_conn_id_seed,
-		state:         peer_state_closed,
-		mtu:           enet_mtu_default,
-		wnd_size:      enet_wnd_size_default,
-		chan_count:    enet_channel_count_default,
-		throttle:      enet_throttle_default,
-		throttle_i:    enet_throttle_interval_default,
-		throttle_acce: enet_throttle_acce_default,
-		throttle_dece: enet_throttle_dece_default,
-		rtt:           enet_rtt_default,
-		last_rtt:      enet_rtt_default,
-		lowest_rtt:    enet_rtt_default,
-		rtt_epoc:      unixtime_now() - int64(enet_throttle_interval_default<<1),
-		throttle_epoc: unixtime_now() - int64(enet_throttle_interval_default<<1),
-		timeout_limit: enet_timeout_limit,
-		timeout_min:   enet_timeout_min,
-		timeout_max:   enet_timeout_max,
-		raddr:         addr.(*net.UDPAddr),
+		clientid:          cid,
+		flags:             0,
+		mtu:               enet_default_mtu,
+		wnd_size:          enet_default_wndsize,
+		chan_count:        enet_default_channel_count,
+		throttle:          enet_default_throttle,
+		throttle_interval: enet_default_throttle_interval,
+		throttle_acce:     enet_default_throttle_acce,
+		throttle_dece:     enet_default_throttle_dece,
+		rtt:               enet_default_rtt,
+		last_rtt:          enet_default_rtt,
+		lowest_rtt:        enet_default_rtt,
+		rtt_epoc:          0, // may expire as soon as fast
+		throttle_epoc:     0, // may expire immediately
+		timeout_limit:     enet_timeout_limit,
+		timeout_min:       enet_timeout_min,
+		timeout_max:       enet_timeout_max,
+		remote_addr:       addr,
+		host:              host,
 	}
 }
 
-func (self *enet_peer) connect(host Host) error {
-	return nil
+func (self *enet_peer) Disconnect() {
+
 }
 
-func (self *enet_peer) disconnect(host Host) error {
-	return nil
+func (self *enet_peer) Write(chanid uint8, dat []byte) {
+
 }
 
-func peer_do_send(peer *enet_peer, host *enet_host) {
-	peer_ack_send(peer, host)
-	peer_window_send(peer, host)
+func (ch *enet_channel) do_send(peer *enet_peer) {
+	if peer.intrans_bytes > int(peer.wnd_size) { // window is overflow
+		return
+	}
+
 }
 
-func peer_channel_get(peer *enet_peer, cid uint8) *enet_channel {
-	if cid >= enet_channel_count {
-		return &enet_channel{}
+func (peer *enet_peer) channel_from_id(cid uint8) *enet_channel {
+	if cid >= peer.chan_count {
+		return &peer.channel[enet_default_channel_count]
 	}
 	v := &peer.channel[cid]
 	return v
 }
 
 func peer_window_is_full(peer *enet_peer) bool {
-	wndsz := int(peer.wnd_size * peer.throttle / enet_throttle_scale)
-	wf := wndsz < peer.intrans_bytes
-	return wf || peer.wnd_used >= int(enet_wnd_count)
+	return peer.intrans_bytes >= int(peer.wnd_size)
 }
 
 func peer_window_is_empty(peer *enet_peer) bool {
-	return peer.wnd_used == 0
+	return peer.intrans_bytes == 0
 }
 
-func peer_snd_bandwidth_is_full(peer *enet_peer) bool {
-	return false
+func (peer *enet_peer) when_enet_incoming_ack(header enet_packet_header, payload []byte) {
+	if peer.flags&enet_peer_flags_stopped != 0 {
+		return
+	}
+	reader := bytes.NewReader(payload)
+	var ack enet_packet_ack
+	err := binary.Read(reader, binary.BigEndian, &ack)
+
+	if err != nil {
+		return
+	}
+	rtt := peer.host.now - int64(ack.tm)
+	peer.update_rtt(rtt)
+	peer.update_throttle(rtt)
+
+	ch := peer.channel_from_id(header.chanid)
+	ch.outgoing_ack(ack.sn)
+	for i := ch.outgoing_do_trans(); i != nil; i = ch.outgoing_do_trans() {
+		if i.retrans != nil {
+			peer.host.timers.remove(i.retrans.index)
+			i.retrans = nil
+		}
+		if i.header.cmd == enet_packet_type_syn {
+			peer.flags |= enet_peer_flags_syn_sent
+			if peer.flags&enet_peer_flags_synack_rcvd != 0 {
+				notify_peer_connected(peer)
+
+			}
+		}
+		if i.header.cmd == enet_packet_type_fin {
+			notify_peer_disconnected(peer)
+			peer.host.destroy_peer(peer)
+		}
+	}
+}
+func notify_peer_connected(peer *enet_peer) {
+
+}
+func notify_peer_disconnected(peer *enet_peer) {
+
+}
+func (peer *enet_peer) reset() {
+
+}
+func (peer *enet_peer) handshake(syn enet_packet_syn) {
+
+}
+func (peer *enet_peer) when_enet_incoming_syn(header enet_packet_header, payload []byte) {
+	reader := bytes.NewReader(payload)
+	var syn enet_packet_syn
+	err := binary.Read(reader, binary.BigEndian, &syn)
+
+	if err != nil || peer.flags&enet_peer_flags_synack_sending != 0 {
+		return
+	}
+	if peer.flags&(enet_peer_flags_syn_sent|enet_peer_flags_syn_rcvd) != 0 {
+		peer.reset()
+	}
+	peer.handshake(syn)
+	// send synack
+	peer.flags |= enet_peer_flags_synack_sending | enet_peer_flags_syn_rcvd
+	ch := peer.channel_from_id(enet_channel_id_none)
+	sn := ch.next_sn
+	ch.next_sn++
+	phdr, synack := enet_packet_synack_default(sn)
+	synack = syn
+	writer := bytes.NewBuffer(nil)
+	binary.Write(writer, binary.BigEndian, synack)
+
+	ch.outgoing_trans(&enet_channel_item{phdr, enet_packet_fragment{}, writer.Bytes(), 0, 0, func() {}})
+	peer.push_outgoing_window(synack, enet_channel_none)
+}
+
+func (peer *enet_peer) when_enet_incoming_synack(header enet_packet_header, payload []byte) {
+	syn, err := enet_packet_syn_decode(payload)
+	if err != nil || peer.flags&enet_peer_flags_syn_sending == 0 {
+		peer.reset()
+		return
+	}
+	peer.handshake(syn)
+	peer.flags |= enet_peer_flags_synack_rcvd
+	if peer.flags&enet_peer_flags_syn_sent != 0 {
+		peer.flags |= enet_peer_flags_established
+		notify_peer_connected(peer)
+	}
+}
+
+func (peer *enet_peer) when_enet_incoming_fin(header enet_packet_header, payload []byte) {
+	if peer.flags&enet_peer_flags_fin_sending != 0 {
+		// needn't do anything, just wait for self fin's ack
+		return
+	}
+	peer.flags |= enet_peer_flags_fin_rcvd | enet_peer_flags_last_acking // enter time-wait state
+	notify_peer_disconnected(peer)
+	to := new_last_ack_timer(peer.rtt_timeout*3, func() { host.destroy_peer(peer) })
+	peer.host.push_timer(to)
+}
+
+func (peer *enet_peer) when_enet_incoming_ping(header enet_packet_header, payload []byte) {
+
+}
+
+func (peer *enet_peer) when_enet_incoming_reliable(header enet_packet_header, payload []byte) {
+	if peer.flags&enet_peer_flags_established == 0 {
+		return
+	}
+	ch := peer.channel_from_id(header.chanid)
+	if ch == nil {
+		return
+	}
+	ch.incoming_trans(&enet_wnd_item{header, enet_packet_fragment{}, payload})
+	ch.incoming_ack(header.sn)
+	for i := ch.incoming_slide(); i != nil; i = ch.incoming_slide() {
+		notify_reliable(peer, i)
+	}
+	//notify_reliable(peer, payload)
+}
+
+func (peer *enet_peer) when_enet_incoming_fragment(header enet_packet_header, payload []byte) {
+	reader := bytes.NewReader(payload)
+	frag := enet_packet_fragment_decode(reader)
+	dat := make([]byte, header.size-binary.Size(frag))
+	reader.Read(dat)
+	ch := peer.channel_from_id(header.chanid)
+	if ch == nil {
+		return
+	}
+	ch.incoming_trans(&enet_wnd_item{header, frag, dat})
+	ch.incoming_ack(header.sn)
+	for i := ch.incoming_slide(); i != nil; i = ch.incoming_slide() {
+		notify_reliable(peer, i)
+	}
+}
+
+func (peer *enet_peer) when_enet_incoming_unrelialbe(header enet_packet_header, payload []byte) {
+	reader := bytes.NewReader(payload)
+	ur := enet_packet_unreliable_decode(reader)
+	dat := make([]byte, header.size-binary.Size(ur))
+	reader.Read(dat)
+	notify_unreliable(peer, ur.usn, dat)
+}
+func (peer *enet_peer) when_unknown(header enet_packet_header, payload []byte) {
+	reader := bytes.NewReader(payload)
+	ur := enet_packet_unreliable_decode(reader)
+	dat := make([]byte, header.size-binary.Size(ur))
+	reader.Read(dat)
+	notify_unreliable(peer, ur.usn, dat)
+}
+func (peer *enet_peer) when_enet_incoming_eg(header enet_packet_header, payload []byte) {
+
+}
+
+const (
+	enet_peer_flags_none        = 1 << iota
+	enet_peer_flags_sock_closed // sock is closed
+	enet_peer_flags_stopped     // closed, rcvd fin, and sent fin+ack and then rcvd fin+ack's ack
+	enet_peer_flags_lastack     // send fin's ack, and waiting retransed fin in rtttimeout
+	enet_peer_flags_syn_sending // connecting            sync-sent
+	enet_peer_flags_syn_sent    // syn acked
+	enet_peer_flags_syn_rcvd    // acking-connect        sync-rcvd
+	enet_peer_flags_listening   // negative peer
+	enet_peer_flags_established // established
+	enet_peer_flags_fin_sending // sent fin, waiting the ack
+	enet_peer_flags_fin_sent    // rcvd fin's ack
+	enet_peer_flags_fin_rcvd    //
+	enet_peer_flags_nothing
+	enet_peer_flags_synack_rcvd
+	enet_peer_flags_synack_sending
+	enet_peer_flags_synack_sent
+)
+
+func (peer *enet_peer) update_rtt(rtt int64) {
+	v := rtt - peer.rtt
+	peer.rtt += v / 8
+	peer.rttv = peer.rttv - peer.rttv/4 + absi64(v/4)
+
+	peer.lowest_rtt = mini64(peer.lowest_rtt, peer.rtt)
+	peer.highest_rttv = maxi64(peer.highest_rttv, peer.rttv)
+
+	if host.now > peer.throttle_interval+peer.throttle_epoc {
+		peer.throttle_epoc = host.now
+		peer.last_rtt = peer.lowest_rtt
+		peer.last_rttv = peer.highest_rttv
+		peer.lowest_rtt = peer.rtt
+		peer.highest_rttv = peer.rttv
+	}
+}
+
+func (peer *enet_peer) update_throttle(rtt int64) {
+	// unstable network
+	if peer.last_rtt <= peer.last_rttv {
+		peer.throttle = enet_throttle_scale
+		return
+	}
+	if rtt < peer.last_rtt {
+		peer.throttle = minui32(peer.throttle+peer.throttle_acce, enet_throttle_scale)
+		return
+	}
+	if rtt > peer.last_rtt+peer.last_rttv<<1 {
+		peer.throttle = maxui32(peer.throttle-peer.throttle_dece, 0)
+	}
+}
+
+func (peer *enet_peer) update_window_size() {
+	peer.wnd_size = peer.wnd_bytes * peer.throttle / enet_throttle_scale
 }

@@ -3,15 +3,18 @@ package enet
 import "fmt"
 
 var (
-	enet_err_unsupported_flags = enet_error("enet unsupport flag")
-	enet_err_not_implemented   = enet_error("enet not implemented")
-	enet_err_assert            = enet_error("assert false")
-	enet_err_invalid_status    = enet_error("host invalid status")
+	enet_err_unsupported_flags   = enet_error("unsupport flag")
+	enet_err_not_implemented     = enet_error("not implemented")
+	enet_err_invalid_status      = enet_error("invalid status")
+	enet_err_invalid_packet_size = enet_error("invalid packet size: %v")
+	enet_err_assert              = enet_error("assert false")
 )
 
-func assert(v bool, format string, a ...interface{}) {
+type enet_error string
+
+func assert(v bool) {
 	if !v {
-		panic(enet_error(format, a))
+		panic(enet_err_assert.f())
 	}
 }
 func assure(v bool, format string, a ...interface{}) {
@@ -23,10 +26,14 @@ func enet_panic_error(format string, a ...interface{}) {
 	panic(fmt.Errorf(format, a))
 }
 
-func enet_error(format string, a ...interface{}) error {
-	return fmt.Errorf(format, a)
+func (err enet_error) f(a ...interface{}) error {
+	return fmt.Errorf(string(err), a...)
 }
 
-func enet_err_invalid_packet_size(sz int) error {
-	return fmt.Errorf("enet invalid packet size: %v", sz)
+var enable_debug bool = true
+
+func debugf(format string, a ...interface{}) {
+	if enable_debug {
+		fmt.Printf(format, a...)
+	}
 }
