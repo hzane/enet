@@ -3,12 +3,12 @@ package enet
 const channel_packet_count = 256
 
 type enet_channel_item struct {
-	header   enet_packet_header
-	fragment enet_packet_fragment // used if header.cmd == enet_packet_fragment
-	payload  []byte               // not include packet-header
-	retries  int                  // sent times for outgoing packet
-	acked    int                  // acked times
-	retrans  *enet_timer_item     // retrans timer
+	header   EnetPacketHeader
+	fragment EnetPacketFragment // used if header.cmd == enet_packet_fragment
+	payload  []byte             // not include packet-header
+	retries  int                // sent times for outgoing packet
+	acked    int                // acked times
+	retrans  *enet_timer_item   // retrans timer
 }
 
 // outgoing: ->end ..untransfered.. next ..transfered.. begin ->
@@ -29,16 +29,16 @@ type enet_channel struct {
 }
 
 func (ch *enet_channel) outgoing_pend(item *enet_channel_item) {
-	debugf("channel-push %v\n", item.header.cmd)
-	item.header.sn = ch._next_sn
+	debugf("channel-push %v\n", item.header.Type)
+	item.header.SN = ch._next_sn
 	ch._next_sn++
 
-	idx := item.header.sn % channel_packet_count
+	idx := item.header.SN % channel_packet_count
 	v := ch.outgoing[idx]
-	assert(v == nil && item.header.sn == ch.outgoing_end)
+	assert(v == nil && item.header.SN == ch.outgoing_end)
 	ch.outgoing[idx] = item
-	if ch.outgoing_end <= item.header.sn {
-		ch.outgoing_end = item.header.sn + 1
+	if ch.outgoing_end <= item.header.SN {
+		ch.outgoing_end = item.header.SN + 1
 	}
 	ch.outgoing_used++
 }
@@ -51,8 +51,8 @@ func (ch *enet_channel) outgoing_ack(sn uint32) {
 	}
 	idx := sn % channel_packet_count
 	v := ch.outgoing[idx]
-	assert(v != nil && v.header.sn == sn)
-	ch.intrans_bytes -= v.header.size
+	assert(v != nil && v.header.SN == sn)
+	ch.intrans_bytes -= v.header.Size
 	v.acked++
 }
 
@@ -83,28 +83,28 @@ func (ch *enet_channel) outgoing_do_trans() (item *enet_channel_item) {
 	assert(item != nil && item.acked == 0)
 	item.retries++
 	ch.outgoing_next++
-	ch.intrans_bytes += item.header.size
+	ch.intrans_bytes += item.header.Size
 	return
 }
 
 // may be retransed packet
 func (ch *enet_channel) incoming_trans(item *enet_channel_item) {
-	if item.header.sn < ch.incoming_begin {
+	if item.header.SN < ch.incoming_begin {
 		return
 	}
-	idx := item.header.sn % channel_packet_count
+	idx := item.header.SN % channel_packet_count
 	v := ch.incoming[idx]
 	// duplicated packet
 	if v != nil {
 		v.retries++
 		return
 	}
-	assert(v == nil || v.header.sn == item.header.sn)
+	assert(v == nil || v.header.SN == item.header.SN)
 
 	ch.incoming[idx] = item
 	ch.incoming_used++
-	if ch.incoming_end <= item.header.sn {
-		ch.incoming_end = item.header.sn + 1
+	if ch.incoming_end <= item.header.SN {
+		ch.incoming_end = item.header.SN + 1
 	}
 }
 
@@ -115,7 +115,7 @@ func (ch *enet_channel) incoming_ack(sn uint32) {
 	}
 	idx := sn % channel_packet_count
 	v := ch.incoming[idx]
-	assert(v != nil && v.header.sn == sn)
+	assert(v != nil && v.header.SN == sn)
 	v.acked++
 }
 
@@ -129,14 +129,14 @@ func (ch *enet_channel) incoming_slide() (item *enet_channel_item) { // return v
 	if v == nil || v.acked <= 0 { // not received yet
 		return
 	}
-	assert(v.header.sn == ch.incoming_begin)
+	assert(v.header.SN == ch.incoming_begin)
 
 	// merge fragments
-	if v.header.cmd == enet_packet_type_fragment {
+	if v.header.Type == enet_packet_type_fragment {
 		all := true
-		for i := uint32(1); i < v.fragment.count; i++ {
+		for i := uint32(1); i < v.fragment.Count; i++ {
 			n := ch.incoming[idx+i]
-			if n == nil || n.header.sn != v.header.sn+i || n.fragment.sn != v.header.sn {
+			if n == nil || n.header.SN != v.header.SN+i || n.fragment.SN != v.header.SN {
 				all = false
 				break
 			}
@@ -146,9 +146,9 @@ func (ch *enet_channel) incoming_slide() (item *enet_channel_item) { // return v
 		}
 
 		item = v
-		ch.incoming_begin += v.fragment.count
-		ch.incoming_used -= v.fragment.count
-		for i := uint32(1); i < v.fragment.count; i++ {
+		ch.incoming_begin += v.fragment.Count
+		ch.incoming_used -= v.fragment.Count
+		for i := uint32(1); i < v.fragment.Count; i++ {
 			item.payload = append(item.payload, ch.incoming[idx+1].payload...)
 			ch.incoming[idx+i] = nil
 		}

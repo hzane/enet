@@ -101,7 +101,7 @@ func (host *enet_host) Write(endp string, chanid uint8, dat []byte) {
 	host.outgoing <- &enet_host_outgoing_command{endp, dat, chanid, true}
 }
 func (host *enet_host) Stop() {
-	host.when_socket_incoming_packet(enet_protocol_header{}, enet_packet_header{}, nil, nil)
+	host.when_socket_incoming_packet(EnetProtocolHeader{}, EnetPacketHeader{}, nil, nil)
 }
 
 // run in another routine
@@ -117,18 +117,18 @@ func (host *enet_host) run_socket() {
 		}
 		dat := buf[:n]
 		reader := bytes.NewReader(dat)
-		var phdr enet_protocol_header
+		var phdr EnetProtocolHeader
 		binary.Read(reader, binary.BigEndian, &phdr)
 
-		if phdr.flags&enet_protocol_flags_crc != 0 {
-			var crc32 enet_crc32_header
+		if phdr.Flags&enet_protocol_flags_crc != 0 {
+			var crc32 EnetCrc32Header
 			binary.Read(reader, binary.BigEndian, &crc32)
 		}
 
-		var pkhdr enet_packet_header
-		for i := uint8(0); err == nil && i < phdr.packet_n; i++ {
+		var pkhdr EnetPacketHeader
+		for i := uint8(0); err == nil && i < phdr.PacketCount; i++ {
 			err = binary.Read(reader, binary.BigEndian, &pkhdr)
-			payload := make([]byte, int(pkhdr.size)-binary.Size(pkhdr))
+			payload := make([]byte, int(pkhdr.Size)-binary.Size(pkhdr))
 			_, err := reader.Read(payload)
 			debugf("socket recv %v\n", pkhdr)
 			if err == nil {
@@ -139,7 +139,7 @@ func (host *enet_host) run_socket() {
 	}
 	// socket may be not closed yet
 	if host.flags&enet_host_flags_stopped == 0 {
-		host.when_socket_incoming_packet(enet_protocol_header{}, enet_packet_header{}, nil, nil)
+		host.when_socket_incoming_packet(EnetProtocolHeader{}, EnetPacketHeader{}, nil, nil)
 	}
 }
 
@@ -184,8 +184,8 @@ func (host *enet_host) do_send(dat []byte, addr *net.UDPAddr) {
 
 // move rcvd socket datagrams to run routine
 // payload or addr is nil means socket recv breaks
-func (host *enet_host) when_socket_incoming_packet(phdr enet_protocol_header,
-	pkhdr enet_packet_header,
+func (host *enet_host) when_socket_incoming_packet(phdr EnetProtocolHeader,
+	pkhdr EnetPacketHeader,
 	payload []byte,
 	addr *net.UDPAddr) (err error) {
 	host.incoming <- &enet_host_incoming_command{
@@ -207,7 +207,7 @@ func (host *enet_host) connect_peer(ep string) {
 	hdr, syn := enet_packet_syn_default()
 	ch := peer.channel_from_id(enet_channel_id_none)
 	//	ch.outgoing_pend(hdr, enet_packet_fragment{}, enet_packet_syn_encode(syn), nil)
-	peer.outgoing_pend(ch, hdr, enet_packet_fragment{}, enet_packet_syn_encode(syn))
+	peer.outgoing_pend(ch, hdr, EnetPacketFragment{}, enet_packet_syn_encode(syn))
 }
 func (host *enet_host) disconnect_peer(ep string) {
 	peer := host.peer_from_endpoint(ep, enet_peer_id_any)
@@ -246,17 +246,17 @@ func (host *enet_host) when_outgoing_host_command(item *enet_host_outgoing_comma
 		for i := uint32(0); i < frags; i++ {
 			dat := item.payload[i*peer.mtu : (i+1)*peer.mtu]
 			pkhdr, frag := enet_packet_fragment_default(item.chanid, uint32(len(dat)))
-			frag.count = frags
-			frag.index = i
-			frag.length = l
-			frag.offset = i * peer.mtu
-			frag.sn = firstsn
+			frag.Count = frags
+			frag.Index = i
+			frag.Size = l
+			frag.Offset = i * peer.mtu
+			frag.SN = firstsn
 			peer.outgoing_pend(ch, pkhdr, frag, dat)
 		}
 
 	} else {
 		pkhdr := enet_packet_reliable_default(item.chanid, l)
-		peer.outgoing_pend(ch, pkhdr, enet_packet_fragment{}, item.payload)
+		peer.outgoing_pend(ch, pkhdr, EnetPacketFragment{}, item.payload)
 	}
 	ch.do_send(peer)
 	return
@@ -267,35 +267,35 @@ func (host *enet_host) when_incoming_host_command(item *enet_host_incoming_comma
 		host.close()
 		return
 	}
-	host.update_rcv_statis(int(item.packet_header.size))
+	host.update_rcv_statis(int(item.packet_header.Size))
 
-	if item.packet_header.cmd > enet_packet_type_count {
+	if item.packet_header.Type > enet_packet_type_count {
 		// invalid packet type, nothing should be done
-		debugf("skipped packet: %v\n", item.packet_header.cmd)
+		debugf("skipped packet: %v\n", item.packet_header.Type)
 		return
 	}
-	peer := host.peer_from_addr(item.endpoint, item.protocol_header.clientid)
-	if peer.clientid != item.protocol_header.clientid {
+	peer := host.peer_from_addr(item.endpoint, item.protocol_header.ClientID)
+	if peer.clientid != item.protocol_header.ClientID {
 		debugf("cid mismatch %v\n", peer.remote_addr)
 		return
 	}
-	ch := peer.channel_from_id(item.packet_header.chanid)
+	ch := peer.channel_from_id(item.packet_header.ChannelID)
 
 	// ack if needed
-	if item.packet_header.flags&enet_packet_header_flags_needack != 0 {
-		hdr, ack := enet_packet_ack_default(item.packet_header.chanid)
-		ack.sn = item.packet_header.sn
-		ack.tm = item.protocol_header.time
-		peer.outgoing_pend(ch, hdr, enet_packet_fragment{}, enet_packet_ack_encode(ack))
+	if item.packet_header.Flags&enet_packet_header_flags_needack != 0 {
+		hdr, ack := enet_packet_ack_default(item.packet_header.ChannelID)
+		ack.SN = item.packet_header.SN
+		ack.SntTime = item.protocol_header.SntTime
+		peer.outgoing_pend(ch, hdr, EnetPacketFragment{}, enet_packet_ack_encode(ack))
 		//		i := &enet_channel_item{hdr, enet_packet_fragment{}, enet_packet_ack_encode(ack), 0, 0, nil}
 		//		ch.outgoing_pend(i)
 		//		ch.outgoing_ack(hdr.sn) // ack needn't ack, so we just mark it as acked
 	}
-	_when_enet_packet_incoming_disp[item.packet_header.cmd](peer, item.packet_header, item.payload)
+	_when_enet_packet_incoming_disp[item.packet_header.Type](peer, item.packet_header, item.payload)
 	ch.do_send(peer)
 }
 
-type when_enet_packet_incoming_disp func(peer *enet_peer, hdr enet_packet_header, payload []byte)
+type when_enet_packet_incoming_disp func(peer *enet_peer, hdr EnetPacketHeader, payload []byte)
 
 var _when_enet_packet_incoming_disp = []when_enet_packet_incoming_disp{
 	(*enet_peer).when_enet_incoming_ack,
@@ -357,8 +357,8 @@ const (
 )
 
 type enet_host_incoming_command struct {
-	protocol_header enet_protocol_header
-	packet_header   enet_packet_header // .size == len(payload)
+	protocol_header EnetProtocolHeader
+	packet_header   EnetPacketHeader // .size == len(payload)
 	payload         []byte
 	endpoint        *net.UDPAddr
 }
