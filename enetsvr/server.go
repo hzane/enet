@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 
@@ -15,18 +14,17 @@ func main() {
 	host, err := enet.NewHost(endpoint)
 	panic_if_error(err)
 
-	host.OnReliable = pong
-	host.OnUnreliable = pong
-	host.OnConnected = on_peer_connected
-	host.OnDisconnected = on_peer_disconnected
+	host.SetDataHandler(pong)
+	host.SetConnectionHandler(on_peer_connected)
+	host.SetDisconnectionHandler(on_peer_disconnected)
 	host.Run(c)
 }
 
-func on_peer_connected(peer enet.Peer, ret int) {
-
+func on_peer_connected(host enet.Host, peer string, ret int) {
+	fmt.Printf("%v conn\n", peer)
 }
-func on_peer_disconnected(peer enet.Peer) {
-
+func on_peer_disconnected(host enet.Host, peer string, ret int) {
+	fmt.Printf("%v disconn\n", peer)
 }
 func install_signal() chan os.Signal {
 	c := make(chan os.Signal, 1)
@@ -34,8 +32,10 @@ func install_signal() chan os.Signal {
 	return c
 }
 
-func pong(peer enet.Peer, chid uint8, data []uint8) {
-	enet.SendReliable(host, peer, chid, data)
+func pong(host enet.Host, ep string, chanid uint8, payload []byte) {
+	host.Write(ep, chanid, payload)
+
+	fmt.Printf("dat pong %v\n", ep)
 }
 
 func panic_if_error(err error) {

@@ -16,44 +16,43 @@ const (
 
 const (
 	enet_protocol_flags_none uint8 = iota
-	enet_protocol_flags_crc        = 0xcc
+	enet_protocol_flags_crc        = 0xcc // use enet_crc32_header
 )
 
 const (
-	enet_packet_header_flags_none uint8 = iota
-	enet_packet_header_flags_needack
-	enet_packet_header_flags_forcefin_
+	enet_packet_header_flags_none      uint8 = iota
+	enet_packet_header_flags_needack         // for syn, syncak, fin, reliable, ping, fragment
+	enet_packet_header_flags_forcefin_       // i don't know how to use this flag
 )
 
-/*
 const (
-	enet_protocol_header_bytes     = 12
-	enet_protocol_crc_bytes        = 4
-	enet_protocol_ack_bytes        = enet_protocol_header_bytes + 8
-	enet_protocol_syn_bytes        = enet_protocol_header_bytes + 32
-	enet_protocol_synack_bytes     = enet_protocol_syn_bytes
-	enet_protocol_unreliable_bytes = enet_protocol_header_bytes + 4
-	enet_protocol_fragment_bytes   = enet_protocol_header_byte + 20
-	enet_protocol_fin_bytes        = enet_protocol_header_bytes
-)
-*/
-const (
-	enet_default_mtu               = 1200
+	enet_default_mtu               = 1400
 	enet_default_wndsize           = 0x8000 // bytes
 	enet_default_channel_count     = 2
 	enet_default_throttle_interval = 5000 // ms
 	enet_default_throttle_acce     = 2
 	enet_default_throttle_dece     = 2
-	enet_default_tick_ms           = 20 // ms
+	enet_default_tick_ms           = 20  // ms
+	enet_default_rtt               = 500 //ms
 	enet_udp_size                  = 65536
 	enet_default_throttle          = 32
 	enet_throttle_scale            = 32
-	enet_default_rtt               = 50 //ms
-	enet_timeout_limit             = enet_default_rtt * 15
-	enet_timeout_min               = enet_default_rtt
-	enet_timeout_max               = enet_timeout_limit
+	enet_timeout_limit             = 32   // 30 seconds
+	enet_timeout_min               = 5000 // 5 second
+	enet_timeout_max               = 30000
+	enet_ping_interval             = 1000 // 1 second
+	enet_bps_interval              = 1000 // 1 second
 )
-const enet_channel_id_none uint8 = 0xff
+const (
+	enet_channel_id_none uint8 = 0xff
+	enet_channel_id_all        = 0xfe
+)
+
+const (
+	enet_peer_connect_result_duplicated = 1
+	enet_peer_disconnect_result_invalid
+)
+const enet_peer_id_any uint32 = 0xffffffff
 
 /* uncompatiable with enet origin protocol
 enet_cmd_unsequenced    // +unseq flag

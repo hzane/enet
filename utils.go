@@ -2,6 +2,7 @@ package enet
 
 import "time"
 
+// unixtime millisecond
 func unixtime_now() int64 {
 	return time.Now().UnixNano() / int64(time.Millisecond)
 }
@@ -54,11 +55,4 @@ func maxui32(a, b uint32) uint32 {
 		return b
 	}
 	return a
-}
-
-func bool2int(v bool) int {
-	if v {
-		return 1
-	}
-	return 0
 }

@@ -8,7 +8,7 @@ type enet_timer_callback func()
 type enet_timer_item struct {
 	weight   int64
 	callback enet_timer_callback
-	index    int
+	index    int // heap index
 }
 type priority_queue []*enet_timer_item
 type enet_timer_queue struct{ *priority_queue }
