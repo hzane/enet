@@ -28,6 +28,7 @@ type enet_peer struct {
 	sent_bytes        int
 	rcvd_bps          int
 	sent_bps          int
+	rcv_timeo         int64
 	rtt_timeo         int64
 	rtt               int64 // ms
 	rttv              int64
@@ -44,6 +45,7 @@ type enet_peer struct {
 }
 
 func new_enet_peer(addr *net.UDPAddr, host *enet_host) *enet_peer {
+	debugf("new peer %v\n", addr)
 	cid := host.next_clientid
 	host.next_clientid++
 	return &enet_peer{
@@ -56,6 +58,7 @@ func new_enet_peer(addr *net.UDPAddr, host *enet_host) *enet_peer {
 		throttle_interval: enet_default_throttle_interval,
 		throttle_acce:     enet_default_throttle_acce,
 		throttle_dece:     enet_default_throttle_dece,
+		rcv_timeo:         5000,
 		rtt:               enet_default_rtt,
 		last_rtt:          enet_default_rtt,
 		lowest_rtt:        enet_default_rtt,
@@ -78,6 +81,7 @@ func (peer *enet_peer) do_send(hdr EnetPacketHeader, frag EnetPacketFragment, da
 	}
 	binary.Write(writer, binary.BigEndian, dat)
 	peer.host.do_send(writer.Bytes(), peer.remote_addr)
+	//	debugf("peer do-send %v\n", hdr.Type)
 }
 func (peer *enet_peer) channel_from_id(cid uint8) *enet_channel {
 	if cid >= peer.chan_count {
@@ -109,6 +113,7 @@ func (peer *enet_peer) when_enet_incoming_ack(header EnetPacketHeader, payload [
 	rtt := peer.host.now - int64(ack.SntTime)
 	peer.update_rtt(rtt)
 	peer.update_throttle(rtt)
+	debugf("peer in-ack %v\n", peer.remote_addr)
 
 	ch := peer.channel_from_id(header.ChannelID)
 	ch.outgoing_ack(ack.SN)
@@ -124,6 +129,13 @@ func (peer *enet_peer) when_enet_incoming_ack(header EnetPacketHeader, payload [
 				notify_peer_connected(peer, 0)
 			}
 		}
+		if i.header.Type == enet_packet_type_synack {
+			peer.flags |= enet_peer_flags_synack_sent
+			if peer.flags&enet_peer_flags_syn_rcvd != 0 {
+				peer.flags |= enet_peer_flags_established
+				notify_peer_connected(peer, 0)
+			}
+		}
 		if i.header.Type == enet_packet_type_fin {
 			peer.flags |= enet_peer_flags_stopped
 			notify_peer_disconnected(peer, 0)
@@ -132,13 +144,13 @@ func (peer *enet_peer) when_enet_incoming_ack(header EnetPacketHeader, payload [
 	}
 }
 func notify_data(peer *enet_peer, dat []byte) {
-
+	debugf("on-dat %v\n", len(dat))
 }
 func notify_peer_connected(peer *enet_peer, ret int) {
-
+	debugf("peer connected %v, ret: %v\n", peer.remote_addr, ret)
 }
 func notify_peer_disconnected(peer *enet_peer, ret int) {
-
+	debugf("peer disconnected %v, ret: %v\n", peer.remote_addr, ret)
 }
 func (peer *enet_peer) reset() {
 
@@ -147,6 +159,7 @@ func (peer *enet_peer) handshake(syn EnetPacketSyn) {
 
 }
 func (peer *enet_peer) when_enet_incoming_syn(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-syn %v\n", peer.remote_addr)
 	reader := bytes.NewReader(payload)
 	var syn EnetPacketSyn
 	err := binary.Read(reader, binary.BigEndian, &syn)
@@ -159,21 +172,23 @@ func (peer *enet_peer) when_enet_incoming_syn(header EnetPacketHeader, payload [
 	}
 	peer.handshake(syn)
 	// send synack
-	peer.flags |= enet_peer_flags_synack_sending | enet_peer_flags_syn_rcvd
+	peer.flags |= enet_peer_flags_synack_sending
+	peer.flags |= enet_peer_flags_syn_rcvd
 	ch := peer.channel_from_id(enet_channel_id_none)
 	phdr, synack := enet_packet_synack_default()
 
 	// todo add retrans timer
-	//	ch.outgoing_pend(phdr, enet_packet_fragment{}, enet_packet_synack_encode(synack), nil)
 	peer.outgoing_pend(ch, phdr, EnetPacketFragment{}, enet_packet_synack_encode(synack))
 }
 
 func (peer *enet_peer) when_enet_incoming_synack(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-synack %v\n", peer.remote_addr)
 	reader := bytes.NewReader(payload)
 	var syn EnetPacketSyn
 	err := binary.Read(reader, binary.BigEndian, &syn)
 
 	if err != nil || peer.flags&enet_peer_flags_syn_sending == 0 {
+		debugf("peer reset %X", peer.flags)
 		peer.reset()
 		return
 	}
@@ -186,6 +201,7 @@ func (peer *enet_peer) when_enet_incoming_synack(header EnetPacketHeader, payloa
 }
 
 func (peer *enet_peer) when_enet_incoming_fin(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-fin %v\n", peer.remote_addr)
 	if peer.flags&enet_peer_flags_fin_sending != 0 {
 		// needn't do anything, just wait for self fin's ack
 		return
@@ -201,6 +217,7 @@ func (peer *enet_peer) when_enet_incoming_ping(header EnetPacketHeader, payload 
 }
 
 func (peer *enet_peer) when_enet_incoming_reliable(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-reliable %v\n", peer.remote_addr)
 	if peer.flags&enet_peer_flags_established == 0 {
 		return
 	}
@@ -216,6 +233,7 @@ func (peer *enet_peer) when_enet_incoming_reliable(header EnetPacketHeader, payl
 }
 
 func (peer *enet_peer) when_enet_incoming_fragment(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-frag %v\n", peer.remote_addr)
 	reader := bytes.NewReader(payload)
 	var frag EnetPacketFragment
 	binary.Read(reader, binary.BigEndian, &frag)
@@ -234,6 +252,7 @@ func (peer *enet_peer) when_enet_incoming_fragment(header EnetPacketHeader, payl
 }
 
 func (peer *enet_peer) when_enet_incoming_unrelialbe(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-unreliable %v\n", peer.remote_addr)
 	reader := bytes.NewReader(payload)
 	var ur EnetPacketUnreliable
 	binary.Read(reader, binary.BigEndian, &ur)
@@ -246,6 +265,7 @@ func (peer *enet_peer) when_unknown(header EnetPacketHeader, payload []byte) {
 	debugf("peer skipped packet : %v\n", header.Type)
 }
 func (peer *enet_peer) when_enet_incoming_eg(header EnetPacketHeader, payload []byte) {
+	debugf("peer in-eg %v\n", peer.remote_addr)
 
 }
 
@@ -283,7 +303,8 @@ func (peer *enet_peer) update_rtt(rtt int64) {
 		peer.lowest_rtt = peer.rtt
 		peer.highest_rttv = peer.rttv
 	}
-	peer.rtt_timeo = rtt + peer.rttv<<1
+	peer.rtt_timeo = rtt + peer.rttv<<2
+	peer.rcv_timeo = peer.rtt_timeo << 4
 }
 
 func (peer *enet_peer) update_throttle(rtt int64) {
@@ -325,17 +346,21 @@ func (peer *enet_peer) outgoing_pend(ch *enet_channel,
 
 	}
 	reretrans := func() {
-		item.retrans = peer.host.timers.push(peer.host.now+peer.rtt_timeo, reset)
+		item.retrans = peer.host.timers.push(peer.host.now+peer.rcv_timeo, reset)
 		item.retries++
 		peer.do_send(item.header, item.fragment, item.payload)
 	}
 	retrans := func() {
-		item.retrans = peer.host.timers.push(peer.host.now+peer.rtt_timeo, reretrans)
+		item.retrans = peer.host.timers.push(peer.host.now+peer.rcv_timeo, reretrans)
 		item.retries++
 		peer.do_send(item.header, item.fragment, item.payload)
 	}
+
 	if hdr.Type != enet_packet_type_ack {
-		item.retrans = peer.host.timers.push(peer.host.now+peer.rtt_timeo, retrans)
+		item.retrans = peer.host.timers.push(peer.host.now+peer.rcv_timeo, retrans)
+	} else {
+		ch.outgoing_ack(hdr.SN)
 	}
 	ch.outgoing_pend(item)
+	ch.do_send(peer)
 }

@@ -130,7 +130,7 @@ func (host *enet_host) run_socket() {
 			err = binary.Read(reader, binary.BigEndian, &pkhdr)
 			payload := make([]byte, int(pkhdr.Size)-binary.Size(pkhdr))
 			_, err := reader.Read(payload)
-			debugf("socket recv %v\n", pkhdr)
+			//debugf("socket recv %v\n", pkhdr)
 			if err == nil {
 				host.when_socket_incoming_packet(phdr, pkhdr, payload, addr)
 			}
@@ -160,6 +160,7 @@ func (host *enet_host) close() {
 
 	// disable tick func
 	host.flags |= enet_host_flags_tick_closed
+	debugf("%v closed\n", host.addr)
 }
 func (host *enet_host) when_tick(t time.Time) {
 	if host.flags&enet_host_flags_tick_closed != 0 {
@@ -167,6 +168,7 @@ func (host *enet_host) when_tick(t time.Time) {
 	}
 	host.update_statis()
 	for cb := host.timers.pop(host.now); cb != nil; cb = host.timers.pop(host.now) {
+		debugf("timer timeout\n")
 		cb()
 	}
 }
@@ -180,6 +182,7 @@ func (host *enet_host) do_send(dat []byte, addr *net.UDPAddr) {
 	if err != nil {
 		host.close()
 	}
+	//	debugf("host do-send %v, %v, %v\n", n, err, addr)
 }
 
 // move rcvd socket datagrams to run routine
@@ -197,6 +200,7 @@ func (host *enet_host) when_socket_incoming_packet(phdr EnetProtocolHeader,
 	return
 }
 func (host *enet_host) connect_peer(ep string) {
+	debugf("connecting %v\n", ep)
 	cid := host.next_clientid
 	host.next_clientid++
 	peer := host.peer_from_endpoint(ep, cid)
@@ -204,12 +208,13 @@ func (host *enet_host) connect_peer(ep string) {
 		notify_peer_connected(peer, enet_peer_connect_result_duplicated)
 		return
 	}
+	peer.flags |= enet_peer_flags_syn_sending
 	hdr, syn := enet_packet_syn_default()
 	ch := peer.channel_from_id(enet_channel_id_none)
-	//	ch.outgoing_pend(hdr, enet_packet_fragment{}, enet_packet_syn_encode(syn), nil)
 	peer.outgoing_pend(ch, hdr, EnetPacketFragment{}, enet_packet_syn_encode(syn))
 }
 func (host *enet_host) disconnect_peer(ep string) {
+	debugf("disconnecting %v\n", ep)
 	peer := host.peer_from_endpoint(ep, enet_peer_id_any)
 	if peer.flags&enet_peer_flags_established == 0 {
 		notify_peer_disconnected(peer, enet_peer_disconnect_result_invalid)
@@ -218,6 +223,10 @@ func (host *enet_host) disconnect_peer(ep string) {
 	if peer.flags&(enet_peer_flags_fin_rcvd|enet_peer_flags_fin_sending) != 0 {
 		return
 	}
+	hdr := enet_packet_fin_default()
+	peer.flags |= enet_peer_flags_fin_sending
+	ch := peer.channel_from_id(enet_channel_id_none)
+	peer.outgoing_pend(ch, hdr, EnetPacketFragment{}, []byte{})
 }
 func (host *enet_host) reset_peer(ep string) {
 	peer := host.peer_from_endpoint(ep, enet_peer_id_any)
@@ -236,6 +245,7 @@ func (host *enet_host) when_outgoing_host_command(item *enet_host_outgoing_comma
 	peer := host.peer_from_endpoint(item.peer, enet_peer_id_any)
 	if peer.flags&enet_peer_flags_established == 0 ||
 		peer.flags&(enet_peer_flags_fin_sending|enet_peer_flags_synack_sending) != 0 {
+		debugf("write denied for at status %X", peer.flags)
 		return
 	}
 	ch := peer.channel_from_id(item.chanid)
@@ -258,7 +268,7 @@ func (host *enet_host) when_outgoing_host_command(item *enet_host_outgoing_comma
 		pkhdr := enet_packet_reliable_default(item.chanid, l)
 		peer.outgoing_pend(ch, pkhdr, EnetPacketFragment{}, item.payload)
 	}
-	ch.do_send(peer)
+	//	ch.do_send(peer)
 	return
 }
 
@@ -270,7 +280,6 @@ func (host *enet_host) when_incoming_host_command(item *enet_host_incoming_comma
 	host.update_rcv_statis(int(item.packet_header.Size))
 
 	if item.packet_header.Type > enet_packet_type_count {
-		// invalid packet type, nothing should be done
 		debugf("skipped packet: %v\n", item.packet_header.Type)
 		return
 	}
@@ -286,18 +295,17 @@ func (host *enet_host) when_incoming_host_command(item *enet_host_incoming_comma
 		hdr, ack := enet_packet_ack_default(item.packet_header.ChannelID)
 		ack.SN = item.packet_header.SN
 		ack.SntTime = item.protocol_header.SntTime
+		debugf("ack packet %v, typ:%v\n", ack.SN, item.packet_header.Type)
 		peer.outgoing_pend(ch, hdr, EnetPacketFragment{}, enet_packet_ack_encode(ack))
-		//		i := &enet_channel_item{hdr, enet_packet_fragment{}, enet_packet_ack_encode(ack), 0, 0, nil}
-		//		ch.outgoing_pend(i)
-		//		ch.outgoing_ack(hdr.sn) // ack needn't ack, so we just mark it as acked
 	}
 	_when_enet_packet_incoming_disp[item.packet_header.Type](peer, item.packet_header, item.payload)
-	ch.do_send(peer)
+	//	ch.do_send(peer)
 }
 
 type when_enet_packet_incoming_disp func(peer *enet_peer, hdr EnetPacketHeader, payload []byte)
 
 var _when_enet_packet_incoming_disp = []when_enet_packet_incoming_disp{
+	(*enet_peer).when_unknown,
 	(*enet_peer).when_enet_incoming_ack,
 	(*enet_peer).when_enet_incoming_syn,
 	(*enet_peer).when_enet_incoming_synack,

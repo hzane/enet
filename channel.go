@@ -29,10 +29,9 @@ type enet_channel struct {
 }
 
 func (ch *enet_channel) outgoing_pend(item *enet_channel_item) {
-	debugf("channel-push %v\n", item.header.Type)
 	item.header.SN = ch._next_sn
 	ch._next_sn++
-
+	debugf("channel outgoing %v, typ: %v\n", item.header.SN, item.header.Type)
 	idx := item.header.SN % channel_packet_count
 	v := ch.outgoing[idx]
 	assert(v == nil && item.header.SN == ch.outgoing_end)
@@ -45,6 +44,7 @@ func (ch *enet_channel) outgoing_pend(item *enet_channel_item) {
 
 // what if outgoing_wrap
 func (ch *enet_channel) outgoing_ack(sn uint32) {
+	debugf("outgoing ack %v\n", sn)
 	if sn < ch.outgoing_begin || sn >= ch.outgoing_end { // already acked or error
 		debugf("channel-ack abandoned %v\n", sn)
 		return
@@ -64,6 +64,7 @@ func (ch *enet_channel) outgoing_slide() (item *enet_channel_item) {
 	idx := ch.outgoing_begin % channel_packet_count
 	v := ch.outgoing[idx]
 	assert(v != nil)
+	debugf("outgoing slide %v, sn:%v, rty:%v, ack:%v\n", v.header.Type, v.header.SN, v.retries, v.acked)
 	if v.retries == 0 || v.acked == 0 {
 		return
 	}
