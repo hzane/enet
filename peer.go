@@ -358,8 +358,6 @@ func (peer *enet_peer) outgoing_pend(ch *enet_channel,
 
 	if hdr.Type != enet_packet_type_ack {
 		item.retrans = peer.host.timers.push(peer.host.now+peer.rcv_timeo, retrans)
-	} else {
-		ch.outgoing_ack(hdr.SN)
 	}
 	ch.outgoing_pend(item)
 	ch.do_send(peer)

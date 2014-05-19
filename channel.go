@@ -64,10 +64,13 @@ func (ch *enet_channel) outgoing_slide() (item *enet_channel_item) {
 	idx := ch.outgoing_begin % channel_packet_count
 	v := ch.outgoing[idx]
 	assert(v != nil)
-	debugf("outgoing slide %v, sn:%v, rty:%v, ack:%v\n", v.header.Type, v.header.SN, v.retries, v.acked)
-	if v.retries == 0 || v.acked == 0 {
+	if v.retries == 0 {
 		return
 	}
+	if v.header.Type != enet_packet_type_ack && v.acked == 0 {
+		return
+	}
+	debugf("outgoing slide %v, sn:%v, rty:%v, ack:%v\n", v.header.Type, v.header.SN, v.retries, v.acked)
 	item = v
 	ch.outgoing_begin++
 	return
@@ -81,7 +84,8 @@ func (ch *enet_channel) outgoing_do_trans() (item *enet_channel_item) {
 	}
 	idx := ch.outgoing_next % channel_packet_count
 	item = ch.outgoing[idx]
-	assert(item != nil && item.acked == 0)
+	assert(item != nil)
+	assert((item.acked == 0 && item.header.Type != enet_packet_type_ack) || item.header.Type == enet_packet_type_ack)
 	item.retries++
 	ch.outgoing_next++
 	ch.intrans_bytes += item.header.Size
